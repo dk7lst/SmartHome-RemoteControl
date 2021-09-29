@@ -1,7 +1,7 @@
 #include <M5EPD.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
-#include "ScreenUpdate.h"
+#include "NetworkProtocol.h"
 
 extern WiFiClient tcp;
 
@@ -15,9 +15,33 @@ struct ScreenUpdateHeader {
   uint8_t screenUpdateMode; // see m5epd_update_mode_t. Set to UPDATE_MODE_NONE to skip update.
   uint8_t flags; // See SUH_FLAGS.
 };
+
+struct TouchEventMessage {
+  uint16_t x, y, size;
+
+  void set(const tp_finger_t &finger) {
+    x = finger.x;
+    y = finger.y;
+    size = finger.size;
+  }
+};
 #pragma pack()
 
-void cmdScreenUpdate(M5EPD_Canvas *canvas) {
+void sendHeader(MessageIds msgid) {
+  PacketHeader hdr;
+  hdr.magic = 0x48F3;
+  hdr.msgid = msgid;
+  tcp.write((byte *)&hdr, sizeof hdr);
+}
+
+void sendTouchEventMessage(const tp_finger_t &finger) {
+  sendHeader(MSG_TouchEvent);
+  TouchEventMessage tu;
+  tu.set(finger);
+  tcp.write((byte *)&tu, sizeof tu);
+}
+
+void processScreenUpdateMessage(M5EPD_Canvas *canvas) {
   ScreenUpdateHeader suh;
   tcp.readBytes((byte *)&suh, sizeof suh);
   if (suh.flags & SUH_FLAGS_CLEARSCREEN) canvas->fillCanvas(0);

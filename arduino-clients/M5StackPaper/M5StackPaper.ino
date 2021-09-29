@@ -2,24 +2,13 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 
-#include "ScreenUpdate.h"
+#include "NetworkProtocol.h"
 #include "secrets.h"
 
 M5EPD_Canvas canvas(&M5.EPD);
 WiFiClient tcp;
 
 enum CONNECTSTATE {CS_DISCONNECTED, CS_WIFICONNECTED, CS_TCPCONNECTED} constate = CS_DISCONNECTED, constateOld = CS_DISCONNECTED;
-
-#pragma pack(1)
-enum CMD {
-  CMD_ScreenUpdate = 1
-};
-
-struct PacketHeader {
-  uint16_t magic; // Magic number to check packet is really for us and stream is still in sync - always 0x48F3
-  uint8_t cmd; // see CMD;
-};
-#pragma pack()
 
 void setup() {
   M5.begin(true, false, false, true, true);
@@ -28,7 +17,9 @@ void setup() {
   M5.EPD.SetRotation(90);
   M5.EPD.Clear(true);
 
-  canvas.createCanvas(540, 960);
+  M5.TP.SetRotation(90);
+
+  canvas.createCanvas(M5EPD_PANEL_H, M5EPD_PANEL_W); // 540x960 pixels
   canvas.setTextSize(10);
   canvas.printf("Booting...\n");
   canvas.setTextSize(4);
@@ -55,7 +46,15 @@ void loop() {
     canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
   }
 
-  if (constate == CS_WIFICONNECTED && tcp.connect(serverhost, 21001)) constate = CS_TCPCONNECTED;
+  if (M5.TP.avaliable()) { // Check for IRQ from GT911 touch controller
+    M5.TP.update(); // Read data from from GT911
+    if(!M5.TP.isFingerUp()) sendTouchEventMessage(M5.TP.readFinger(0)); // Only one finger for now
+  }
+
+  if (constate == CS_WIFICONNECTED && tcp.connect(serverhost, 21001)) {
+    constate = CS_TCPCONNECTED;
+    sendHeader(MSG_Init);
+  }
   if (constate == CS_TCPCONNECTED && !tcp.connected()) constate = CS_WIFICONNECTED;
 
   if (constate != constateOld) {
@@ -75,12 +74,12 @@ void loop() {
     canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
   }
 
-  if (tcp.available() >= sizeof (PacketHeader)) {
+  if (tcp.available() >= sizeof (PacketHeader)) { // Process incoming messages
     PacketHeader hdr;
     tcp.readBytes((byte *)&hdr, sizeof hdr);
     if (hdr.magic == 0x48F3) {
-      switch(hdr.cmd) {
-        case CMD_ScreenUpdate: cmdScreenUpdate(&canvas); break;
+      switch(hdr.msgid) {
+        case MSG_ScreenUpdate: processScreenUpdateMessage(&canvas); break;
       }
     }
   }
