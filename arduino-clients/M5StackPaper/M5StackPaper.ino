@@ -7,8 +7,9 @@
 
 M5EPD_Canvas canvas(&M5.EPD);
 WiFiClient tcp;
+unsigned long autoPowerOffTime = 0;
 
-enum CONNECTSTATE {CS_DISCONNECTED, CS_WIFICONNECTED, CS_TCPCONNECTED} constate = CS_DISCONNECTED, constateOld = CS_DISCONNECTED;
+enum CONNECTSTATE {CS_UNKNOWN, CS_DISCONNECTED, CS_WIFICONNECTED, CS_TCPCONNECTED} constate = CS_DISCONNECTED, constateOld = CS_UNKNOWN;
 
 void setup() {
   M5.begin(true, false, false, true, true);
@@ -20,35 +21,34 @@ void setup() {
   M5.TP.SetRotation(90);
 
   canvas.createCanvas(M5EPD_PANEL_H, M5EPD_PANEL_W); // 540x960 pixels
-  canvas.setTextSize(10);
-  canvas.printf("Booting...\n");
-  canvas.setTextSize(4);
-  canvas.printf("Bat: %f V\n", M5.getBatteryVoltage() / 1000.0);
-  canvas.printf("Free Heap: %d/%d KB\nFree PSRAM: %d/%d KB\n", ESP.getFreeHeap() / 1024, ESP.getHeapSize() / 1024, ESP.getFreePsram() / 1024, ESP.getPsramSize() / 1024);
-  canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
 
   WiFi.onEvent(WiFiEventHandler);
   WiFi.begin(ssid, password);
+  stayAwake();
 }
 
 void loop() {
   M5.update();
 
-  if (M5.BtnP.wasPressed()) powerOff();
-  if (M5.BtnL.wasPressed()) {
-    canvas.setTextSize(4);
-    canvas.printf("Btn L\n");
-    canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
+  if (M5.BtnP.wasPressed()) {
+    sendButtonEventMessage(0);
+    powerOff();
   }
-  if (M5.BtnR.wasPressed()) {
-    canvas.setTextSize(4);
-    canvas.printf("Btn R\n");
-    canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
+  else if (M5.BtnL.wasPressed()) {
+    sendButtonEventMessage(1);
+    stayAwake();
+  }
+  else if (M5.BtnR.wasPressed()) {
+    sendButtonEventMessage(2);
+    stayAwake();
   }
 
   if (M5.TP.avaliable()) { // Check for IRQ from GT911 touch controller
     M5.TP.update(); // Read data from from GT911
-    if(!M5.TP.isFingerUp()) sendTouchEventMessage(M5.TP.readFinger(0)); // Only one finger for now
+    if(!M5.TP.isFingerUp()) {
+      sendTouchEventMessage(M5.TP.readFinger(0)); // Only one finger for now
+      stayAwake();
+    }
   }
 
   if (constate == CS_WIFICONNECTED && tcp.connect(serverhost, 21001)) {
@@ -58,21 +58,29 @@ void loop() {
   if (constate == CS_TCPCONNECTED && !tcp.connected()) constate = CS_WIFICONNECTED;
 
   if (constate != constateOld) {
-    constateOld = constate;
-    canvas.setTextSize(4);
+    constateOld = constate; // Set constateOld immediately to not miss any events from WiFi eventhandler.
+    canvas.fillCanvas(0);
+    canvas.setCursor(0, 10);
+    canvas.setTextSize(10);
     switch(constate) {
       case CS_DISCONNECTED:
-        canvas.printf("WiFi disconnected");
+        canvas.drawString("[NO WIFI]", 30, 500);
         break;
       case CS_WIFICONNECTED:
-        canvas.printf("WiFi connected");
-        canvas.print(" IP: "); canvas.println(WiFi.localIP());
+        canvas.drawString("[NO SERVER]", 30, 500);
         break;
       case CS_TCPCONNECTED:
-        canvas.printf("TCP connected");
+        canvas.drawString("[CONNECTED]", 30, 500);
     }
+    canvas.setTextSize(3);
+    canvas.printf("Free Heap: %d/%d KB\nFree PSRAM: %d/%d KB\n", ESP.getFreeHeap() / 1024, ESP.getHeapSize() / 1024, ESP.getFreePsram() / 1024, ESP.getPsramSize() / 1024);
+    canvas.setTextSize(4);
+    canvas.printf("Battery: %.2f V\n", M5.getBatteryVoltage() / 1000.0);
+    if (constate >= CS_WIFICONNECTED) canvas.print("IP: "); canvas.println(WiFi.localIP());
     canvas.pushCanvas(0, 0, UPDATE_MODE_DU4);
   }
+
+  if (millis() >= autoPowerOffTime) powerOff();
 
   if (tcp.available() >= sizeof (PacketHeader)) { // Process incoming messages
     PacketHeader hdr;
@@ -98,7 +106,12 @@ void WiFiEventHandler(WiFiEvent_t event) {
   }
 }
 
+void stayAwake() {
+  autoPowerOffTime = millis() + 10 * 60 * 1000;
+}
+
 void powerOff() {
+  tcp.stop();
   while(true) {
     canvas.fillCanvas(0);
     canvas.setTextSize(10);

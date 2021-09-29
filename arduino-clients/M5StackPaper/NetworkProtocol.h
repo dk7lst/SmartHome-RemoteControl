@@ -5,7 +5,8 @@ class M5EPD_Canvas;
 enum MessageIds {
   MSG_Init = 0,  // M5STACK -> PC
   MSG_ScreenUpdate, // PC -> M5STACK
-  MSG_TouchEvent // M5STACK -> PC
+  MSG_TouchEvent, // M5STACK -> PC
+  MSG_ButtonEvent // M5STACK -> PC
 };
 
 #pragma pack(1)
@@ -17,5 +18,6 @@ struct PacketHeader {
 
 void sendHeader(MessageIds msgid);
 void sendTouchEventMessage(const tp_finger_t &finger);
+void sendButtonEventMessage(int button);
 
 void processScreenUpdateMessage(M5EPD_Canvas *canvas);
